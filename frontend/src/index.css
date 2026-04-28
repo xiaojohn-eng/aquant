@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 30% 10%;
+    --foreground: 40 20% 90%;
+    --card: 220 35% 15%;
+    --card-foreground: 40 20% 90%;
+    --popover: 220 35% 15%;
+    --popover-foreground: 40 20% 90%;
+    --primary: 30 45% 65%;
+    --primary-foreground: 220 30% 10%;
+    --secondary: 220 25% 20%;
+    --secondary-foreground: 40 20% 90%;
+    --muted: 220 25% 20%;
+    --muted-foreground: 40 10% 60%;
+    --accent: 220 25% 20%;
+    --accent-foreground: 40 20% 90%;
+    --destructive: 0 60% 55%;
+    --destructive-foreground: 40 20% 90%;
+    --border: 220 30% 25%;
+    --input: 220 30% 25%;
+    --ring: 30 45% 65%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-[#1a1a2e] text-[#e6ddd0] antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  .font-mono {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+}
+
+@layer utilities {
+  .text-trade-up {
+    color: #e74c3c;
+  }
+  .text-trade-down {
+    color: #2ecc71;
+  }
+  .bg-trade-up\/10 {
+    background-color: rgba(231, 76, 60, 0.1);
+  }
+  .bg-trade-down\/10 {
+    background-color: rgba(46, 204, 113, 0.1);
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a2e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a3a5c;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3a4a6c;
+}
+
+/* Recharts tooltip override */
+.recharts-tooltip-wrapper {
+  outline: none !important;
+}
