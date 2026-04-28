@@ -32,7 +32,7 @@ const App: React.FC = () => {
   }, []);
 
   const { state: wsState } = useWebSocket({
-    endpoint: 'main',
+    endpoint: 'market',
     onMessage: handleWsMessage,
     autoConnect: true,
   });

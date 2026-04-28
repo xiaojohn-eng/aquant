@@ -92,22 +92,29 @@ const LinearGauge: React.FC<{ value: number; max: number; label: string; color: 
 };
 
 const GpuMonitor: React.FC<GpuMonitorProps> = ({ status, history, loading }) => {
+  const memUsed = (status.memory_used_mb ?? status.memoryUsed ?? 0) / 1024;
+  const memTotal = (status.memory_total_mb ?? status.memoryTotal ?? 81920) / 1024;
+  const gpuUtil = status.utilization_gpu_pct ?? status.utilization ?? 0;
+  const gpuTemp = status.temperature_c ?? status.temperature ?? 0;
+  const gpuPower = status.power_draw_w ?? status.power ?? 0;
+  const deviceName = status.name ?? status.deviceName ?? 'NVIDIA H100 80GB';
+
   const memPct = useMemo(
-    () => (status.memoryTotal > 0 ? (status.memoryUsed / status.memoryTotal) * 100 : 0),
-    [status.memoryUsed, status.memoryTotal]
+    () => (memTotal > 0 ? (memUsed / memTotal) * 100 : 0),
+    [memUsed, memTotal]
   );
 
-  const tempColor = status.temperature >= 80 ? '#e74c3c' : status.temperature >= 60 ? '#d4a574' : '#2ecc71';
-  const utilColor = status.utilization >= 90 ? '#e74c3c' : status.utilization >= 50 ? '#d4a574' : '#2ecc71';
+  const tempColor = gpuTemp >= 80 ? '#e74c3c' : gpuTemp >= 60 ? '#d4a574' : '#2ecc71';
+  const utilColor = gpuUtil >= 90 ? '#e74c3c' : gpuUtil >= 50 ? '#d4a574' : '#2ecc71';
 
   const chartData = useMemo(() => {
     return history.map((h) => ({
       time: h.timestamp.split(' ')[1] || h.timestamp.slice(-8),
       utilization: h.utilization,
-      memory: (h.memoryUsed / (status.memoryTotal || 1)) * 100,
+      memory: (h.memory_used ?? h.memoryUsed ?? 0) / (memTotal || 1) * 100,
       temperature: h.temperature,
     }));
-  }, [history, status.memoryTotal]);
+  }, [history, memTotal]);
 
   return (
     <div className="space-y-6">
@@ -119,18 +126,18 @@ const GpuMonitor: React.FC<GpuMonitorProps> = ({ status, history, loading }) => 
           </div>
           <div>
             <h3 className="text-sm font-medium text-[#e6ddd0]">
-              {status.deviceName || 'NVIDIA H100 80GB'}
+              {deviceName}
             </h3>
             <p className="text-xs text-[#95a5a6]">GPU计算设备状态监控</p>
           </div>
           <div className="ml-auto flex items-center gap-2">
             <div
               className={`w-2 h-2 rounded-full ${
-                status.utilization > 0 ? 'bg-[#2ecc71] animate-pulse' : 'bg-[#95a5a6]'
+                gpuUtil > 0 ? 'bg-[#2ecc71] animate-pulse' : 'bg-[#95a5a6]'
               }`}
             />
             <span className="text-xs text-[#95a5a6]">
-              {status.utilization > 0 ? '运行中' : '空闲'}
+              {gpuUtil > 0 ? '运行中' : '空闲'}
             </span>
           </div>
         </div>
@@ -144,7 +151,7 @@ const GpuMonitor: React.FC<GpuMonitorProps> = ({ status, history, loading }) => 
             {/* Utilization Gauge */}
             <div className="bg-[#1e2a4a]/50 rounded-xl p-4 flex flex-col items-center">
               <CircularGauge
-                value={status.utilization}
+                value={gpuUtil}
                 label="GPU利用率"
                 color={utilColor}
               />
@@ -169,14 +176,14 @@ const GpuMonitor: React.FC<GpuMonitorProps> = ({ status, history, loading }) => 
                 className="text-3xl font-bold font-mono"
                 style={{ color: tempColor }}
               >
-                {status.temperature}°C
+                {gpuTemp}°C
               </span>
               <div className="mt-3 w-full">
                 <div className="h-1.5 bg-[#2a3a5c] rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all duration-500"
                     style={{
-                      width: `${Math.min((status.temperature / 100) * 100, 100)}%`,
+                      width: `${Math.min((gpuTemp / 100) * 100, 100)}%`,
                       backgroundColor: tempColor,
                     }}
                   />
@@ -191,14 +198,14 @@ const GpuMonitor: React.FC<GpuMonitorProps> = ({ status, history, loading }) => 
                 <span className="text-xs text-[#95a5a6]">功耗</span>
               </div>
               <span className="text-3xl font-bold font-mono text-[#e6ddd0]">
-                {status.power}W
+                {gpuPower}W
               </span>
               <div className="mt-3 w-full">
                 <div className="h-1.5 bg-[#2a3a5c] rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full bg-[#d4a574] transition-all duration-500"
                     style={{
-                      width: `${Math.min((status.power / 700) * 100, 100)}%`,
+                      width: `${Math.min((gpuPower / 700) * 100, 100)}%`,
                     }}
                   />
                 </div>
@@ -210,15 +217,15 @@ const GpuMonitor: React.FC<GpuMonitorProps> = ({ status, history, loading }) => 
         {/* Linear Gauges */}
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
           <LinearGauge
-            value={status.memoryUsed}
-            max={status.memoryTotal || 80}
+            value={memUsed}
+            max={memTotal || 80}
             label="显存占用"
             color={memPct >= 80 ? '#e74c3c' : '#d4a574'}
             unit="GB"
           />
-          {status.fanSpeed !== undefined && (
+          {(status.fan_speed_pct ?? status.fanSpeed) !== undefined && (
             <LinearGauge
-              value={status.fanSpeed}
+              value={status.fan_speed_pct ?? status.fanSpeed ?? 0}
               max={100}
               label="风扇转速"
               color="#2ecc71"

@@ -64,45 +64,45 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({
   const metricCards = [
     {
       label: '总收益',
-      value: metrics.totalReturn,
+      value: metrics.total_return_pct ?? 0,
       format: 'pct',
       icon: TrendingUp,
-      positive: metrics.totalReturn >= 0,
+      positive: (metrics.total_return_pct ?? 0) >= 0,
     },
     {
       label: '年化收益',
-      value: metrics.annualizedReturn,
+      value: metrics.annualized_return_pct ?? 0,
       format: 'pct',
       icon: Zap,
-      positive: metrics.annualizedReturn >= 0,
+      positive: (metrics.annualized_return_pct ?? 0) >= 0,
     },
     {
       label: '夏普比率',
-      value: metrics.sharpeRatio,
+      value: metrics.sharpe_ratio ?? 0,
       format: 'num',
       icon: Activity,
-      positive: metrics.sharpeRatio >= 1,
+      positive: (metrics.sharpe_ratio ?? 0) >= 1,
     },
     {
       label: '最大回撤',
-      value: metrics.maxDrawdown,
+      value: metrics.max_drawdown_pct ?? 0,
       format: 'pct',
       icon: TrendingDown,
       positive: false, // drawdown is always bad
     },
     {
       label: '胜率',
-      value: metrics.winRate,
+      value: metrics.win_rate_pct ?? 0,
       format: 'pct',
       icon: Target,
-      positive: metrics.winRate >= 0.5,
+      positive: (metrics.win_rate_pct ?? 0) >= 50,
     },
     {
       label: '盈亏比',
-      value: metrics.profitFactor,
+      value: metrics.profit_factor ?? 0,
       format: 'num',
       icon: Percent,
-      positive: metrics.profitFactor >= 1.5,
+      positive: (metrics.profit_factor ?? 0) >= 1.5,
     },
   ];
 
@@ -114,12 +114,12 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({
   const navChartData = filteredData.map((d) => ({
     date: d.date.slice(5),
     nav: d.nav,
-    cumulativeReturn: d.cumulativeReturn,
+    cumulativeReturn: d.cumulative_return ?? d.cumulativeReturn ?? 0,
   }));
 
   const dailyReturnChartData = filteredData.map((d) => ({
     date: d.date.slice(5),
-    return: d.dailyReturn,
+    return: d.daily_return ?? d.dailyReturn ?? 0,
   }));
 
   // Heatmap data: last 12 months

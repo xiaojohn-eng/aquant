@@ -12,30 +12,46 @@ export interface StockRecommendation {
   reasons: string[];
   rank: number;
   expectedReturn?: number;
+  expected_return?: number;
+  risk_level?: string;
   industry?: string;
   marketCap?: number;
   factors?: Record<string, number>;
+  model_confidence?: number;
+  sector_alignment?: string;
 }
 
 export interface PortfolioPosition {
   code: string;
   name: string;
   buyPrice: number;
+  buy_price?: number;
   buyTime: string;
+  buy_time?: string;
   currentPrice: number;
+  current_price?: number;
   pnl: number;
   pnlPct: number;
+  pnl_pct?: number;
   quantity?: number;
   totalValue?: number;
+  current_value?: number;
+  total_value?: number;
 }
 
 export interface PerformanceMetrics {
-  totalReturn: number;
-  annualizedReturn: number;
-  sharpeRatio: number;
-  maxDrawdown: number;
-  winRate: number;
-  profitFactor: number;
+  total_return_pct: number;
+  annualized_return_pct?: number;
+  sharpe_ratio?: number;
+  max_drawdown_pct?: number;
+  win_rate_pct?: number;
+  profit_factor?: number;
+  calmar_ratio?: number;
+  avg_win_pct?: number;
+  avg_loss_pct?: number;
+  total_trades?: number;
+  open_positions?: number;
+  last_updated?: string;
   volatility?: number;
   beta?: number;
   alpha?: number;
@@ -44,8 +60,10 @@ export interface PerformanceMetrics {
 export interface DailyPerformance {
   date: string;
   nav: number;
-  dailyReturn: number;
-  cumulativeReturn: number;
+  daily_return?: number;
+  cumulative_return?: number;
+  dailyReturn?: number;
+  cumulativeReturn?: number;
 }
 
 export interface MonthlyReturn {
@@ -54,11 +72,20 @@ export interface MonthlyReturn {
 }
 
 export interface GpuStatus {
-  utilization: number;
-  memoryUsed: number;
-  memoryTotal: number;
-  temperature: number;
-  power: number;
+  index?: number;
+  name?: string;
+  utilization_gpu_pct?: number;
+  memory_used_mb?: number;
+  memory_total_mb?: number;
+  temperature_c?: number;
+  power_draw_w?: number;
+  fan_speed_pct?: number;
+  clock_sm_mhz?: number;
+  utilization?: number;
+  memoryUsed?: number;
+  memoryTotal?: number;
+  temperature?: number;
+  power?: number;
   deviceName?: string;
   fanSpeed?: number;
   clockSpeed?: number;
@@ -67,16 +94,30 @@ export interface GpuStatus {
 export interface GpuHistoryPoint {
   timestamp: string;
   utilization: number;
-  memoryUsed: number;
+  memory_used?: number;
   temperature: number;
   power: number;
 }
 
 export interface SystemStatus {
-  tradingStatus: string;
-  lastUpdate: string;
-  nextOperation: string;
-  isMarketOpen: boolean;
+  state?: string;
+  version?: string;
+  tradingStatus?: string;
+  lastUpdate?: string;
+  nextOperation?: string;
+  isMarketOpen?: boolean;
+  is_trading_day?: boolean;
+  market_open?: boolean;
+  last_update_time?: string;
+  next_buy_time?: string;
+  next_sell_time?: string;
+  db_connected?: boolean;
+  gpu_available?: boolean;
+  gpu_count?: number;
+  active_positions?: number;
+  today_recommendations?: number;
+  uptime_seconds?: number;
+  message?: string;
 }
 
 export interface BacktestParams {
@@ -118,7 +159,7 @@ export type TimeRange = '1M' | '3M' | '6M' | '1Y' | 'ALL';
 export type NavItem = {
   path: string;
   label: string;
-  icon: string;
+  icon: unknown;
 };
 
 export type WebSocketMessage =
