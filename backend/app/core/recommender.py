@@ -317,6 +317,86 @@ class StockRecommender:
         return enriched
 
     # ------------------------------------------------------------------
+    # Advanced reasoning (multi-dimensional)
+    # ------------------------------------------------------------------
+
+    def generate_advanced_reasons(
+        self,
+        stock_code: str,
+        stock_name: str,
+        rank: int,
+        score: float,
+        factors: Dict[str, float],
+        market_stats: Optional[Dict[str, float]] = None,
+    ) -> Dict:
+        """
+        Generate multi-dimensional recommendation report.
+        
+        Returns a comprehensive analysis with technical, fundamental,
+        capital flow, risk, and actionable insights.
+        """
+        from app.core.advanced_reasoning import AdvancedReasoningEngine
+        
+        engine = AdvancedReasoningEngine()
+        market_stats = market_stats or {}
+        
+        report = engine.generate_report(
+            code=stock_code,
+            name=stock_name,
+            rank=rank,
+            score=score,
+            factors=factors,
+            market_stats=market_stats,
+        )
+        
+        return {
+            "executive_summary": report.executive_summary,
+            "investment_thesis": report.investment_thesis,
+            "factor_exposures": [
+                {
+                    "name": e.name,
+                    "value": round(e.value, 3),
+                    "percentile": round(e.percentile, 1),
+                    "contribution": round(e.contribution, 4),
+                    "interpretation": e.interpretation,
+                }
+                for e in report.factor_exposures
+            ],
+            "factor_attribution": report.factor_attribution,
+            "technical_signals": [
+                {
+                    "indicator": s.indicator,
+                    "value": round(s.value, 3),
+                    "signal": s.signal,
+                    "strength": s.strength,
+                    "description": s.description,
+                }
+                for s in report.technical_signals
+            ],
+            "trend_assessment": report.trend_assessment,
+            "capital_flow": report.capital_flow_summary,
+            "volume_analysis": report.volume_analysis,
+            "fundamental": report.fundamental_summary,
+            "valuation": report.valuation_assessment,
+            "risk": {
+                "volatility_level": report.risk.volatility_level,
+                "drawdown_risk": report.risk.drawdown_risk,
+                "liquidity_risk": report.risk.liquidity_risk,
+                "concentration_risk": report.risk.concentration_risk,
+                "overall": report.risk.overall_risk,
+                "score": round(report.risk.risk_score, 1),
+            },
+            "peer_comparison": report.peer_comparison,
+            "market_position": report.market_position,
+            "entry_strategy": report.entry_strategy,
+            "target_price": report.target_price,
+            "stop_loss": report.stop_loss,
+            "position_sizing": report.position_sizing,
+            "time_horizon": report.time_horizon,
+            "structured_reasons": report.structured_reasons,
+        }
+
+    # ------------------------------------------------------------------
     # Risk label
     # ------------------------------------------------------------------
 
