@@ -93,7 +93,7 @@ class TradeRecord:
 class PerformanceMetrics:
     """Standard quantitative performance report."""
     total_return_pct: float
-    annualised_return_pct: float
+    annualized_return_pct: float
     sharpe_ratio: float
     sortino_ratio: float
     max_drawdown_pct: float
@@ -114,7 +114,7 @@ class PerformanceMetrics:
     def to_dict(self) -> Dict[str, Any]:
         d = {
             "total_return_pct": round(self.total_return_pct, 4),
-            "annualised_return_pct": round(self.annualised_return_pct, 4),
+            "annualized_return_pct": round(self.annualized_return_pct, 4),
             "sharpe_ratio": round(self.sharpe_ratio, 4),
             "sortino_ratio": round(self.sortino_ratio, 4),
             "max_drawdown_pct": round(self.max_drawdown_pct, 4),
@@ -705,12 +705,12 @@ class BacktestEngine:
         turnover = (total_turnover / avg_nav) / max(n_years, 1e-6) if avg_nav > 0 else 0
 
         # Monthly returns
-        monthly = nav_df["daily_ret"].resample("M").apply(lambda x: (1 + x).prod() - 1)
+        monthly = nav_df["daily_ret"].resample("ME").apply(lambda x: (1 + x).prod() - 1)
         monthly_dict = {k.strftime("%Y-%m"): round(v * 100, 4) for k, v in monthly.items()}
 
         return PerformanceMetrics(
             total_return_pct=round(total_ret, 4),
-            annualised_return_pct=round(ann_ret, 4),
+            annualized_return_pct=round(ann_ret, 4),
             sharpe_ratio=round(sharpe, 4),
             sortino_ratio=round(sortino, 4),
             max_drawdown_pct=round(max_dd, 4),
@@ -732,7 +732,7 @@ class BacktestEngine:
     def _empty_metrics(self) -> PerformanceMetrics:
         return PerformanceMetrics(
             total_return_pct=0.0,
-            annualised_return_pct=0.0,
+            annualized_return_pct=0.0,
             sharpe_ratio=0.0,
             sortino_ratio=0.0,
             max_drawdown_pct=0.0,
@@ -759,7 +759,7 @@ class BacktestEngine:
             f"**回测区间**: {self.config.start_date} ~ {self.config.end_date}",
             f"**初始资金**: ¥{self.config.initial_capital:,.0f}",
             f"**总收益率**: {m.total_return_pct:.2f}%",
-            f"**年化收益**: {m.annualised_return_pct:.2f}%",
+            f"**年化收益**: {m.annualized_return_pct:.2f}%",
             f"**夏普比率**: {m.sharpe_ratio:.3f}",
             f"**索提诺比率**: {m.sortino_ratio:.3f}",
             f"**最大回撤**: {m.max_drawdown_pct:.2f}%",

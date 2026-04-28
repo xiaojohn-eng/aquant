@@ -70,6 +70,23 @@ PARQUET_DIR.mkdir(parents=True, exist_ok=True)
 EXCLUDED_PREFIXES: Tuple[str, ...] = ("8", "4", "9", "BJ")
 ST_REGEX = re.compile(r"(?:^|[^a-zA-Z])(ST|\*ST|退)(?:[^a-zA-Z]|$)")
 
+
+def _filter_st_and_bj(stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Remove ST/*ST/退市 and Beijing Stock Exchange (北交所) stocks."""
+    filtered: List[Dict[str, Any]] = []
+    for s in stocks:
+        code = str(s.get("code", ""))
+        name = str(s.get("name", ""))
+        # Exclude BJ / 北交所 / prefixes 8/4/9
+        if code.startswith("8") or code.startswith("4") or code.startswith("9") or "BJ" in code.upper():
+            continue
+        # Exclude ST / *ST / 退市
+        if ST_REGEX.search(name):
+            continue
+        filtered.append(s)
+    return filtered
+
+
 # Minute frequencies supported by AkShare
 MINUTE_FREQS: Tuple[str, ...] = ("1", "5", "15", "30", "60")
 
