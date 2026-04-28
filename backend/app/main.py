@@ -96,8 +96,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("GPU warm-up failed: %s", exc)
 
-    # 5. Seed system state
-    _update_system_state(SystemState.IDLE, "System ready")
+    # 5. Initialise Feature Store
+    try:
+        from app.plugins.feature_store import FeatureStore
+        feature_store = FeatureStore()
+        logger.info("Feature Store ready (schema v%s)", FeatureStore.SCHEMA_VERSION)
+    except Exception as exc:
+        logger.warning("Feature Store init failed: %s", exc)
+
+    # 6. Setup Prometheus metrics
+    try:
+        from app.monitor.prometheus_metrics import setup_prometheus
+        setup_prometheus(app)
+        logger.info("Prometheus metrics mounted at /metrics")
+    except Exception as exc:
+        logger.warning("Prometheus setup failed: %s", exc)
+
+    # 7. Seed system state
+    _update_system_state(SystemState.IDLE, "System ready v2.0")
 
     logger.info("=== Startup complete – serving requests ===")
     yield
@@ -135,8 +151,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Aquant Quantitative Trading API",
-        description="HTTP and WebSocket backend for A-share quantitative strategy execution",
-        version="1.0.0",
+        description="HTTP and WebSocket backend for A-share quantitative strategy execution. "
+                    "v2.0 with Feature Store, ML Ranker, Dual Data Sources, and Prometheus monitoring.",
+        version="2.0.0",
         lifespan=lifespan,
     )
 
@@ -159,7 +176,7 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["health"])
     async def health_check() -> Dict[str, Any]:
         uptime = (datetime.now() - _start_time).total_seconds() if _start_time else 0
-        return {"status": "ok", "version": "1.0.0", "uptime_sec": uptime}
+        return {"status": "ok", "version": "2.0.0", "uptime_sec": uptime, "features": ["feature_store", "ml_ranker", "dual_source", "prometheus", "wfa_backtest"]}
 
     @app.get("/", tags=["health"])
     async def root() -> Dict[str, str]:
