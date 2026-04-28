@@ -115,6 +115,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 7. Seed system state
     _update_system_state(SystemState.IDLE, "System ready v2.0")
 
+    # 8. Start background GPU push loop
+    asyncio.create_task(_gpu_push_loop())
+    logger.info("Background GPU push loop started")
+
     logger.info("=== Startup complete – serving requests ===")
     yield
 
@@ -378,12 +382,6 @@ async def _gpu_push_loop() -> None:
 # ---------------------------------------------------------------------------
 
 app = create_app()
-
-# Start background loops after event loop is running
-@app.on_event("startup")
-async def _start_background_loops() -> None:
-    asyncio.create_task(_gpu_push_loop())
-    logger.info("Background GPU push loop started")
 
 
 # ---------------------------------------------------------------------------

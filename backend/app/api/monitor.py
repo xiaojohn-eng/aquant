@@ -108,9 +108,12 @@ def _get_gpu_status() -> List[GpuStatus]:
                 for p in procs:
                     proc_name = None
                     try:
-                        proc_info = pynvml.nvmlSystemGetProcessName(p.pid)
-                        if isinstance(proc_info, bytes):
-                            proc_name = proc_info.decode("utf-8", errors="ignore")
+                        try:
+                            proc_name = pynvml.nvmlSystemGetProcessName(p.pid)
+                        except TypeError:
+                            proc_name = pynvml.nvmlSystemGetProcessName(p.pid)
+                        if isinstance(proc_name, bytes):
+                            proc_name = proc_name.decode("utf-8", errors="ignore")
                         else:
                             proc_name = proc_info
                     except Exception:

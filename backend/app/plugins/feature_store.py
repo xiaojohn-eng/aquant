@@ -21,8 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sqlalchemy import Column, Date, Float, String, create_engine, text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import declarative_base, Session, sessionmaker
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +157,7 @@ class FeatureStore:
         session = self.Session()
         try:
             # Check if exists (should not happen in append-only mode, but defensive)
-            existing = session.query(FeatureRecord).get(record_id)
+            existing = session.get(FeatureRecord, record_id)
             if existing:
                 logger.warning(f"Feature already exists for {record_id}, skipping")
                 return

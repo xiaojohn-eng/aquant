@@ -305,7 +305,7 @@ async def get_stock_history(
     code: str,
     start_date: Optional[date] = Query(None, description="Start date (inclusive)"),
     end_date: Optional[date] = Query(None, description="End date (inclusive)"),
-    period: str = Query("daily", regex="^(daily|weekly)$", description="K-line frequency"),
+    period: str = Query("daily", pattern="^(daily|weekly)$", description="K-line frequency"),
 ) -> List[KlinePoint]:
     """Get historical OHLCV K-line data for a stock."""
     global _kline_cache
