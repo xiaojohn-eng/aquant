@@ -447,6 +447,39 @@ def compute_atr_ratio(
         return out
 
 
+def compute_overnight_return(
+    opens: np.ndarray,
+    pre_closes: np.ndarray,
+) -> np.ndarray:
+    """
+    Overnight return = ln(open / pre_close).
+
+    In the A-share T+1 context, stocks with large negative overnight
+    returns (gapped down) tend to experience intra-day rebound (the
+    "低开高走" pattern documented by 华安证券 and 张兵 2020).
+    Conversely, stocks with positive overnight returns (gapped up)
+    suffer from "高开低走" (尹力博 & 马枭, 系统工程理论与实践).
+
+    Parameters
+    ----------
+    opens: ndarray, shape (n_stocks,)
+        Today's opening price.
+    pre_closes: ndarray, shape (n_stocks,)
+        Previous trading day's closing price.
+
+    Returns
+    -------
+    ndarray, shape (n_stocks,)
+        Overnight log-return per stock.
+    """
+    with _gpu_monitor.track():
+        if GPU_BACKEND == "cupy" and cp is not None:
+            d_open = cp.asarray(opens)
+            d_pre = cp.asarray(pre_closes)
+            return (cp.log(d_open / (d_pre + 1e-12))).get()
+        return np.log(opens / (pre_closes + 1e-12))
+
+
 def compute_liquidity_score(
     amount: np.ndarray,
 ) -> np.ndarray:
@@ -549,6 +582,18 @@ def _numpy_batch_factors(stock_data_dict: Dict[str, np.ndarray]) -> Dict[str, np
     atr = compute_atr_ratio(highs, lows, closes, window=14)
     liquidity = compute_liquidity_score(amounts)
     sector = compute_sector_momentum(stock_sectors, sector_returns)
+
+    # overnight return: requires opens and pre_closes if provided
+    opens = stock_data_dict.get("opens")
+    pre_closes = stock_data_dict.get("pre_closes")
+    if opens is not None and pre_closes is not None:
+        overnight = compute_overnight_return(
+            opens[:, -1] if opens.ndim == 2 else opens,
+            pre_closes[:, -1] if pre_closes.ndim == 2 else pre_closes,
+        )
+    else:
+        overnight = np.zeros(n_stocks, dtype=np.float64)
+
     logger.info("NumPy factor compute time: %.3f s", time.perf_counter() - t0)
 
     return {
@@ -557,6 +602,7 @@ def _numpy_batch_factors(stock_data_dict: Dict[str, np.ndarray]) -> Dict[str, np
         "atr_ratio": atr,
         "liquidity": liquidity,
         "sector_momentum": sector,
+        "overnight_return": overnight,
     }
 
 
@@ -613,6 +659,21 @@ def batch_compute_all_factors(
             atr = compute_atr_ratio(cp.asnumpy(highs), cp.asnumpy(lows), cp.asnumpy(closes), window=14)
             liquidity = compute_liquidity_score(cp.asnumpy(amounts))
             sector = compute_sector_momentum(cp.asnumpy(stock_sectors), cp.asnumpy(sector_returns))
+
+            # overnight return
+            opens = stock_data_dict.get("opens")
+            pre_closes = stock_data_dict.get("pre_closes")
+            if opens is not None and pre_closes is not None:
+                d_open = cp.asarray(opens)
+                d_pre = cp.asarray(pre_closes)
+                if d_open.ndim == 2:
+                    d_open = d_open[:, -1]
+                if d_pre.ndim == 2:
+                    d_pre = d_pre[:, -1]
+                overnight = cp.log(d_open / (d_pre + 1e-12)).get()
+            else:
+                overnight = np.zeros(prices.shape[0], dtype=np.float64)
+
             logger.info("CuPy batch factor time: %.3f s", time.perf_counter() - t0)
 
             return {
@@ -621,6 +682,7 @@ def batch_compute_all_factors(
                 "atr_ratio": atr,
                 "liquidity": liquidity,
                 "sector_momentum": sector,
+                "overnight_return": overnight,
             }
 
     # Numba CUDA or NumPy path

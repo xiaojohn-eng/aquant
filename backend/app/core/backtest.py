@@ -74,6 +74,9 @@ class BacktestConfig:
     stamp_duty_rate: float = 0.001  # sell only
     slippage_pct: float = 0.001  # 0.1 % one-side
     use_cache: bool = True
+    # v4.3 — Market timing: skip days when market trend is down
+    market_timing_lookback: int = 20  # days for market MA
+    market_timing_enabled: bool = True  # enable trend filter
 
 @dataclass
 class TradeRecord:
@@ -161,7 +164,9 @@ def _cost(notional: float, side: str, cfg: BacktestConfig) -> float:
 
 class BacktestEngine:
     """
-    Vectorised backtest engine for the A-share T+1 morning-momentum strategy.
+    Vectorised backtest engine for the A-share T+1 overnight-reversal strategy.
+
+    v4.3 — T+1 adaptive: penalise morning winners / gap-up / high turnover.
 
     Usage
     -----
@@ -186,13 +191,13 @@ class BacktestEngine:
     ) -> None:
         self.config = config
         from . import strategy as _strategy_mod
-        self.strategy = strategy_engine or _strategy_mod.StrategyEngine(
+        self.strategy = strategy_engine or _strategy_mod.create_overnight_reversal_strategy(
             max_positions=config.max_positions,
-            cost_model=_strategy_mod.CostModel(
-                commission_rate=config.commission_rate,
-                commission_min=config.commission_min,
-                stamp_duty_rate=config.stamp_duty_rate,
-            ),
+        )
+        self.strategy.cost_model = _strategy_mod.CostModel(
+            commission_rate=config.commission_rate,
+            commission_min=config.commission_min,
+            stamp_duty_rate=config.stamp_duty_rate,
         )
         self.trades: List[TradeRecord] = []
         self.daily_nav: List[Tuple[date, float]] = []
@@ -277,6 +282,7 @@ class BacktestEngine:
             composite_scores = self._compute_factors_vectorised(
                 open_prices, high_prices, low_prices, close_prices,
                 volumes, amounts, tradable,
+                weights=self.strategy.weights,
             )
         else:
             # Assume caller provides a 2-D array or DataFrame aligned with dates×codes
@@ -288,7 +294,16 @@ class BacktestEngine:
                 logger.warning("factor_data shape mismatch: expected %s, got %s", (n_dates, n_codes), composite_scores.shape)
 
         # ------------------------------------------------------------------
-        # 5. Daily simulation loop (vectorised portfolio selection)
+        # 5. Market-timing: compute market trend filter (v4.3)
+        # ------------------------------------------------------------------
+        # Equal-weighted market index from close prices
+        market_close = np.nanmean(close_prices, axis=1)
+        market_ma20 = pd.Series(market_close).rolling(window=cfg.market_timing_lookback, min_periods=5).mean().values
+        # Market is "up" when today's close >= MA20
+        market_up = market_close >= market_ma20
+
+        # ------------------------------------------------------------------
+        # 6. Daily simulation loop (vectorised portfolio selection)
         # ------------------------------------------------------------------
         nav = cfg.initial_capital
         self.daily_nav = [(dates[0], nav)]
@@ -300,6 +315,11 @@ class BacktestEngine:
 
             # Skip if today or next day is not tradable
             if not self._is_trading_day(today) or not self._is_trading_day(next_day):
+                self.daily_nav.append((today, nav))
+                continue
+
+            # v4.3 — Market timing: skip entry when market trend is down
+            if cfg.market_timing_enabled and not market_up[i]:
                 self.daily_nav.append((today, nav))
                 continue
 
@@ -562,28 +582,49 @@ class BacktestEngine:
         amount: np.ndarray,
         tradable: np.ndarray,
         lookback: int = 20,
-    ) -> pd.DataFrame:
+        weights: Optional[Dict[str, float]] = None,
+    ) -> np.ndarray:
         """
         Compute all factors for every (date, stock) pair using rolling windows.
 
+        v4.3 — T+1 adaptive: penalise morning winners, gap-up, high turnover.
+        Weights are taken from the attached StrategyEngine by default.
+
         Returns
         -------
-        pd.DataFrame
-            Multi-index (date, code) with factor columns.
+        np.ndarray, shape (n_dates, n_codes)
+            Composite score per day per stock.
         """
         n_dates, n_codes = close_p.shape
 
+        # Resolve weights from strategy engine if not provided
+        if weights is None:
+            weights = self.strategy.weights
+
+        # Build direction map matching strategy.py v4.3
+        direction = {
+            "momentum": -1,
+            "volume_ratio": -1,
+            "overnight_return": -1,
+            "atr_ratio": -1,
+            "liquidity": 1,
+            "market_cap": 1,
+            "sector_momentum": 1,
+        }
+
         # 1. Momentum = return from open to high (proxy for 09:30-10:00)
+        #    v4.3: NEGATIVE direction — avoid morning winners (上财 WP2020)
         momentum = np.zeros_like(close_p)
         momentum[1:] = (high_p[1:] - open_p[1:]) / (open_p[1:] + 1e-12)
         momentum = np.where(tradable, momentum, np.nan)
 
         # 2. Volume ratio = today's volume / MA20 volume
+        #    v4.3: NEGATIVE direction — high turnover = overnight penalty
         vol_ma = pd.DataFrame(volume).rolling(window=lookback, min_periods=5).mean().values
         vol_ratio = volume / (vol_ma + 1e-12)
         vol_ratio = np.where(tradable, vol_ratio, np.nan)
 
-        # 3. ATR ratio (14-day)
+        # 3. ATR ratio (14-day) — NEGATIVE direction (keep)
         atr = np.zeros_like(close_p)
         for i in range(lookback, n_dates):
             tr1 = high_p[i - lookback + 1 : i + 1] - low_p[i - lookback + 1 : i + 1]
@@ -594,7 +635,7 @@ class BacktestEngine:
         atr_ratio = atr / (close_p + 1e-12)
         atr_ratio = np.where(tradable, atr_ratio, np.nan)
 
-        # 4. Liquidity = log(amount) percentile
+        # 4. Liquidity = log(amount) percentile — POSITIVE direction (keep)
         log_amt = np.log1p(amount)
         liq = np.zeros_like(log_amt)
         for i in range(n_dates):
@@ -607,14 +648,14 @@ class BacktestEngine:
         # 5. Market cap bias (placeholder – would need external data)
         mkt_cap = np.ones_like(close_p) * 0.5  # neutral
 
+        # 6. Overnight return = open / pre_close - 1
+        #    v4.3: NEGATIVE direction — avoid gap-up (尹力博 2021)
+        overnight = np.zeros_like(close_p)
+        overnight[1:] = (open_p[1:] - close_p[:-1]) / (close_p[:-1] + 1e-12)
+        overnight = np.where(tradable, overnight, np.nan)
+
         # Composite score (z-score weighted)
-        weights = DEFAULT_WEIGHTS_BACKTEST = {
-            "momentum": 0.25,
-            "volume_ratio": 0.20,
-            "atr_ratio": -0.10,
-            "liquidity": 0.15,
-            "market_cap": 0.10,
-        }
+        # Use weights from strategy engine (v4.3 T+1 adaptive)
 
         # z-score per day
         composite = np.zeros_like(close_p)
@@ -627,18 +668,20 @@ class BacktestEngine:
                 sigma = np.nanstd(arr[i])
                 return np.where(valid, (arr[i] - mu) / (sigma + 1e-12), np.nan)
 
-            z_mom = _z(momentum)
-            z_vol = _z(vol_ratio)
-            z_atr = -_z(atr_ratio)  # lower is better
-            z_liq = _z(liq)
+            z_overnight = _z(overnight)
             z_cap = _z(mkt_cap)
+            z_mom = _z(momentum)
+            z_liq = _z(liq)
+            z_atr = _z(atr_ratio)
+            z_vol = _z(vol_ratio)
 
             composite[i] = (
-                weights["momentum"] * z_mom
-                + weights["volume_ratio"] * z_vol
-                + weights["atr_ratio"] * z_atr
-                + weights["liquidity"] * z_liq
-                + weights["market_cap"] * z_cap
+                weights.get("overnight_return", 0.0) * z_overnight * direction.get("overnight_return", -1)
+                + weights.get("market_cap", 0.0) * z_cap * direction.get("market_cap", 1)
+                + weights.get("momentum", 0.0) * z_mom * direction.get("momentum", -1)
+                + weights.get("liquidity", 0.0) * z_liq * direction.get("liquidity", 1)
+                + weights.get("atr_ratio", 0.0) * z_atr * direction.get("atr_ratio", -1)
+                + weights.get("volume_ratio", 0.0) * z_vol * direction.get("volume_ratio", -1)
             )
 
         return composite

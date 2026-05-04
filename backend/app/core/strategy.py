@@ -8,20 +8,36 @@ Responsibilities
 * **Factor ingestion** – receives raw market data, delegates GPU factor
   computation to ``gpu_compute``.
 * **Scoring** – z-score normalise each factor then linearly combine using
-  configurable weights.
+  configurable weights and directions.
 * **Signal generation** – long-only entry at 10:00, mandatory exit at next
   day 09:30 (T+1 rule).
 * **Filter layer** – remove ST/BSE/ halted / limit-up / limit-down stocks.
 * **Cost model** – commission (0.03 %, min 5 CNY) + stamp duty (0.1 % sell).
 
-Research-backed design
-----------------------
-1. **Intra-day momentum, overnight reversal** (Tang et al., 2020)
-   – we capture the momentum leg at 10:00 and exit before the reversal leg.
-2. **Early-window predictability** (Liu et al., 2021)
-   – the 09:30-10:00 interval carries the highest information ratio.
-3. **Volume confirmation** – signals accompanied by >1.5× average volume
-   receive a boost, reducing false break-outs.
+Research-backed design (v4.3 — T+1 Adaptive)
+---------------------------------------------
+1. **Intra-day momentum, overnight reversal** (Bai, Wu & Ke, 上财 WP2020)
+   – A-shares exhibit strong intra-day / overnight reversal caused by T+1.
+   – High intra-day momentum stocks = high risk (small-cap, high vol, high
+     turnover) → large overnight discount (avg –11.9 %/year, 张兵 2020).
+2. **Avoid high overnight return** (尹力博 & 马枭, 系统工程 2021)
+   – "高开低走" anomaly persists 6 months; stocks with positive overnight
+     returns suffer negative intra-day returns.
+3. **Low-risk overnight bias** (Lou et al., 2019; 张兵 2020)
+   – Large-cap / low-volatility / low-turnover stocks have smaller overnight
+     discount and higher next-day opening prices.
+4. **Golden-section reversal** (华安证券 2020)
+   – Intra-day reversal strengthens after 10:00; win rate rises from 72 % to 85 %.
+
+Implication for factor directions
+---------------------------------
+* momentum        → **negative** (avoid morning winners; buy laggards)
+* volume_ratio    → **negative** (high turnover = high risk = overnight penalty)
+* overnight_return → **negative** (avoid gap-up; buy gap-down)
+* atr_ratio       → negative (keep, high volatility penalty)
+* market_cap      → positive (keep, large cap safety)
+* liquidity       → positive (keep)
+* sector_momentum → positive (keep)
 
 Class diagram
 -------------
@@ -68,15 +84,16 @@ LIMIT_UP_PCT_KCB = 0.20  # 20 % for 科创板 / 创业板 first 5 days no limit
 
 # ---------------------------------------------------------------------------
 # Default factor weights (sum ≈ 1.0, can be overridden)
+# v4.3 — T+1 adaptive: penalise morning winners / high turnover / gap-up
 # ---------------------------------------------------------------------------
 DEFAULT_WEIGHTS: Dict[str, float] = {
-    "momentum": 0.25,
-    "volume_ratio": 0.20,
-    "auction_gap": 0.15,
-    "atr_ratio": 0.10,
-    "liquidity": 0.15,
-    "market_cap": 0.10,
-    "sector_momentum": 0.05,
+    "overnight_return": 0.20,   # avoid gap-up; buy gap-down (文献: 尹力博 2021)
+    "market_cap": 0.20,       # large-cap safety (文献: 张兵 2020)
+    "momentum": 0.15,         # NEGATIVE direction — avoid morning winners
+    "liquidity": 0.15,        # prefer liquid names
+    "atr_ratio": 0.10,        # NEGATIVE direction — penalty for high vol
+    "volume_ratio": 0.10,     # NEGATIVE direction — high turnover = risk
+    "sector_momentum": 0.10,  # sector trend
 }
 
 # ---------------------------------------------------------------------------
@@ -258,13 +275,13 @@ class StrategyEngine:
             factor_arrays,
             weights={k: self.weights[k] for k in factor_keys},
             direction={
-                "momentum": 1,
-                "volume_ratio": 1,
-                "auction_gap": 1,
-                "atr_ratio": -1,
-                "liquidity": 1,
-                "market_cap": 1,
-                "sector_momentum": 1,
+                "momentum": -1,          # v4.3: avoid morning winners (上财 WP2020)
+                "volume_ratio": -1,      # v4.3: high turnover = overnight penalty
+                "overnight_return": -1,  # v4.3: avoid gap-up (尹力博 2021)
+                "atr_ratio": -1,         # keep: high volatility penalty
+                "liquidity": 1,          # keep: prefer liquid
+                "market_cap": 1,         # keep: large-cap safety
+                "sector_momentum": 1,    # keep: sector trend
             },
         )
         logger.debug("Composite score compute time: %.3f ms", (datetime.now() - t0).total_seconds() * 1000)
@@ -564,27 +581,64 @@ class StrategyEngine:
 # Convenience: pre-canned strategy presets
 # ---------------------------------------------------------------------------
 
+def create_overnight_reversal_strategy(max_positions: int = 20) -> StrategyEngine:
+    """
+    Factory: T+1 adaptive overnight-reversal strategy (v4.3 default).
+
+    Research backing
+    ----------------
+    * 上财 WP2020 — intra-day / overnight reversal caused by T+1 lock-in.
+    * 张兵 2020 (管理世界) — overnight discount avg –11.9 %/year; large-cap
+      stocks suffer smaller discount.
+    * 尹力博 & 马枭 2021 — "高开低走" anomaly lasts 6 months.
+    * 华安证券 2020 — golden-section reversal strengthens after 10:00.
+
+    Factor directions
+    -----------------
+    * momentum         = **negative**  (avoid morning winners)
+    * volume_ratio     = **negative**  (high turnover = risk)
+    * overnight_return = **negative**  (avoid gap-up)
+    * atr_ratio        = negative     (volatility penalty)
+    * market_cap       = positive     (large-cap safety)
+    * liquidity        = positive      (execution ease)
+    * sector_momentum  = positive      (sector tailwind)
+    """
+    w = {
+        "overnight_return": 0.25,
+        "market_cap": 0.20,
+        "momentum": 0.15,
+        "liquidity": 0.15,
+        "atr_ratio": 0.10,
+        "volume_ratio": 0.10,
+        "sector_momentum": 0.05,
+    }
+    return StrategyEngine(weights=w, max_positions=max_positions)
+
+
 def create_momentum_strategy(max_positions: int = 20) -> StrategyEngine:
-    """Factory: pure momentum tilt (research default)."""
-    w = DEFAULT_WEIGHTS.copy()
-    w["momentum"] = 0.40
-    w["volume_ratio"] = 0.25
-    w["auction_gap"] = 0.15
-    w["atr_ratio"] = 0.05
-    w["liquidity"] = 0.10
-    w["market_cap"] = 0.03
-    w["sector_momentum"] = 0.02
+    """Factory: legacy momentum tilt (research benchmark — NOT recommended
+    for live T+1 trading because it selects high-risk overnight losers)."""
+    w = {
+        "momentum": 0.40,
+        "volume_ratio": 0.25,
+        "overnight_return": 0.0,
+        "atr_ratio": 0.05,
+        "liquidity": 0.10,
+        "market_cap": 0.03,
+        "sector_momentum": 0.02,
+    }
     return StrategyEngine(weights=w, max_positions=max_positions)
 
 
 def create_conservative_strategy(max_positions: int = 20) -> StrategyEngine:
     """Factory: low-volatility tilt for risk-averse allocator."""
-    w = DEFAULT_WEIGHTS.copy()
-    w["momentum"] = 0.15
-    w["volume_ratio"] = 0.15
-    w["auction_gap"] = 0.10
-    w["atr_ratio"] = 0.25
-    w["liquidity"] = 0.20
-    w["market_cap"] = 0.10
-    w["sector_momentum"] = 0.05
+    w = {
+        "momentum": 0.15,
+        "volume_ratio": 0.15,
+        "overnight_return": 0.10,
+        "atr_ratio": 0.25,
+        "liquidity": 0.20,
+        "market_cap": 0.10,
+        "sector_momentum": 0.05,
+    }
     return StrategyEngine(weights=w, max_positions=max_positions)
