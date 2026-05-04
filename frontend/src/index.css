@@ -4,10 +4,35 @@
 
 @layer components {
   .card {
-    @apply bg-white rounded-xl border border-gray-200 p-4 shadow-sm;
+    @apply bg-white rounded-xl border border-gray-200 p-4 shadow-sm transition-colors;
   }
   .dark .card {
     @apply bg-gray-800 border-gray-700;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition;
+  }
+  .dark .btn-primary {
+    @apply bg-emerald-600 hover:bg-emerald-700;
+  }
+
+  .btn-danger {
+    @apply px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition;
+  }
+
+  .badge-green {
+    @apply px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs rounded-full;
+  }
+  .dark .badge-green {
+    @apply bg-emerald-900 text-emerald-300;
+  }
+
+  .badge-red {
+    @apply px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full;
+  }
+  .dark .badge-red {
+    @apply bg-red-900 text-red-300;
   }
 }
 

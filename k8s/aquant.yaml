@@ -1,0 +1,278 @@
+# AQuant Kubernetes Manifests
+# Production-grade deployment for DGX Spark / DGX Station
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aquant
+---
+# ConfigMap — application settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aquant-config
+  namespace: aquant
+data:
+  DATABASE_URL: "postgresql://aquant:aquant_secret@postgres:5432/aquant"
+  REDIS_URL: "redis://redis:6379/0"
+  AQUANT_JWT_SECRET: "change-me-in-production"
+  MARKET_TIMING_ENABLED: "true"
+  WFA_ENABLED: "true"
+  ML_ENABLED: "true"
+---
+# Secret — sensitive credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aquant-secrets
+  namespace: aquant
+type: Opaque
+stringData:
+  jwt-secret: "your-jwt-secret-here"
+  db-password: "aquant_secret"
+  tushare-token: "your-tushare-token"
+---
+# PostgreSQL StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: aquant
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              value: "aquant"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aquant-secrets
+                  key: db-password
+            - name: POSTGRES_DB
+              value: "aquant"
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 50Gi
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: aquant
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+# Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: aquant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: aquant
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+---
+# AQuant Backend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aquant-backend
+  namespace: aquant
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: aquant-backend
+  template:
+    metadata:
+      labels:
+        app: aquant-backend
+    spec:
+      nodeSelector:
+        accelerator: nvidia  # Schedule on GPU nodes
+      containers:
+        - name: backend
+          image: aquant/backend:v4.5
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: aquant-config
+          env:
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+          resources:
+            requests:
+              memory: "8Gi"
+              cpu: "4"
+              nvidia.com/gpu: 1
+            limits:
+              memory: "32Gi"
+              cpu: "8"
+              nvidia.com/gpu: 1
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+# Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: aquant-backend
+  namespace: aquant
+spec:
+  selector:
+    app: aquant-backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+# Nginx Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aquant-ingress
+  namespace: aquant
+  annotations:
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+spec:
+  rules:
+    - host: aquant.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: aquant-backend
+                port:
+                  number: 8000
+---
+# Horizontal Pod Autoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aquant-backend-hpa
+  namespace: aquant
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: aquant-backend
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# Network Policy — restrict inter-pod traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: aquant-network-policy
+  namespace: aquant
+spec:
+  podSelector:
+    matchLabels:
+      app: aquant-backend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: aquant
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+        - podSelector:
+            matchLabels:
+              app: redis
