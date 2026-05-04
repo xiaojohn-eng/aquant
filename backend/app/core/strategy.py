@@ -72,7 +72,7 @@ logger = logging.getLogger("aquant.strategy")
 # ---------------------------------------------------------------------------
 COMMISSION_RATE = 0.0003       # 0.03 %
 COMMISSION_MIN = 5.0           # CNY
-STAMP_DUTY_RATE = 0.001        # 0.1 %, seller only
+STAMP_DUTY_RATE = 0.0005       # 0.05 % since 2023-08-28 (halved)
 TRANSFER_FEE_RATE = 0.00002    # 0.002 % ( Shanghai only, negligible )
 
 # ---------------------------------------------------------------------------
@@ -263,10 +263,24 @@ class StrategyEngine:
         if not factor_keys:
             raise ValueError("No overlap between configured weights and factor columns")
 
+        # v4.3 — Factor orthogonalization (Gram-Schmidt)
+        # Removes collinearity between momentum and overnight_return
+        # which share common variance in T+1 framework
+        factor_keys_list = sorted(factor_keys)
+        ortho_df = factors_df[list(factor_keys_list)].copy()
+        for i, col_i in enumerate(factor_keys_list):
+            for j in range(i):
+                col_j = factor_keys_list[j]
+                # Project col_i onto col_j and subtract
+                dot_ij = (ortho_df[col_i] * ortho_df[col_j]).sum()
+                dot_jj = (ortho_df[col_j] * ortho_df[col_j]).sum()
+                if dot_jj > 1e-12:
+                    ortho_df[col_i] = ortho_df[col_i] - (dot_ij / dot_jj) * ortho_df[col_j]
+
         # Prepare arrays for GPU compute
         factor_arrays: Dict[str, np.ndarray] = {}
         for k in factor_keys:
-            factor_arrays[k] = factors_df[k].fillna(0.0).values.astype(np.float64)
+            factor_arrays[k] = ortho_df[k].fillna(0.0).values.astype(np.float64)
 
         # GPU composite score (lazy import to avoid circular deps)
         from . import gpu_compute
@@ -286,8 +300,13 @@ class StrategyEngine:
         )
         logger.debug("Composite score compute time: %.3f ms", (datetime.now() - t0).total_seconds() * 1000)
 
+        # v4.4 — Hybrid ML + Linear scoring
+        from app.ml.strategy_bridge import MLStrategyBridge
+        ml_bridge = MLStrategyBridge(ml_weight=0.30)
+        final_scores = ml_bridge.score(factors_df, linear_scores=scores)
+
         result = factors_df.copy()
-        result["composite_score"] = scores
+        result["composite_score"] = final_scores
         result["rank"] = result["composite_score"].rank(ascending=False, method="min").astype(int)
         return result.sort_values("composite_score", ascending=False)
 

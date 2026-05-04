@@ -71,7 +71,7 @@ class BacktestConfig:
     exit_time: str = "09:30"   # next-day open
     commission_rate: float = 0.0003
     commission_min: float = 5.0
-    stamp_duty_rate: float = 0.001  # sell only
+    stamp_duty_rate: float = 0.0005  # sell only (halved since 2023-08-28)
     slippage_pct: float = 0.001  # 0.1 % one-side
     use_cache: bool = True
     # v4.3 — Market timing: skip days when market trend is down
@@ -188,6 +188,8 @@ class BacktestEngine:
         self,
         config: BacktestConfig,
         strategy_engine: Optional["strategy.StrategyEngine"] = None,
+        risk_manager: Optional["risk_engine.RiskManager"] = None,
+        slippage_model: Optional["SlippageModel"] = None,
     ) -> None:
         self.config = config
         from . import strategy as _strategy_mod
@@ -199,6 +201,12 @@ class BacktestEngine:
             commission_min=config.commission_min,
             stamp_duty_rate=config.stamp_duty_rate,
         )
+        # v4.4 — Risk management
+        from . import risk_engine as _risk_mod
+        self.risk = risk_manager or _risk_mod.RiskManager()
+        # v4.4 — Slippage model (liquidity-aware)
+        from app.plugins.slippage_model import SlippageModel
+        self.slippage = slippage_model or SlippageModel(stamp_duty_rate=config.stamp_duty_rate)
         self.trades: List[TradeRecord] = []
         self.daily_nav: List[Tuple[date, float]] = []
 
@@ -318,6 +326,12 @@ class BacktestEngine:
                 self.daily_nav.append((today, nav))
                 continue
 
+            # v4.4 — Risk manager: check circuit breaker
+            daily_pnl_pct = ((nav / cfg.initial_capital) - 1) * 100 if cfg.initial_capital > 0 else 0
+            if not self.risk.check_entry_allowed(nav, daily_pnl_pct, today):
+                self.daily_nav.append((today, nav))
+                continue
+
             # v4.3 — Market timing: skip entry when market trend is down
             if cfg.market_timing_enabled and not market_up[i]:
                 self.daily_nav.append((today, nav))
@@ -343,10 +357,11 @@ class BacktestEngine:
             top_idx = np.argpartition(day_scores, -top_n)[-top_n:]
             top_idx = top_idx[np.argsort(day_scores[top_idx])][::-1]
 
-            # Equal-weight allocation
+            # Equal-weight allocation with risk position limit
             cash_per = nav / top_n
             daily_pnl = 0.0
             daily_cost = 0.0
+            current_exposure = 0.0
 
             for idx in top_idx:
                 entry_p = price_10am[i, idx]
@@ -354,9 +369,14 @@ class BacktestEngine:
                 if entry_p <= 0 or exit_p <= 0:
                     continue
 
-                # Slippage
-                entry_p *= (1 + cfg.slippage_pct)
-                exit_p *= (1 - cfg.slippage_pct)
+                # v4.4 — Liquidity-aware slippage (replaces fixed slippage_pct)
+                avg_amount = np.nanmean(amount[max(0, i-20):i, idx]) if i > 0 else amount[i, idx]
+                entry_slip = self.slippage.estimate_slippage(
+                    codes[idx], entry_p * 100, 100, avg_amount, atr_ratio[i, idx] if i < len(atr_ratio) else 0.01, None,
+                ) if hasattr(self, 'slippage') else cfg.slippage_pct
+                exit_slip = entry_slip
+                entry_p *= (1 + entry_slip)
+                exit_p *= (1 - exit_slip)
 
                 raw_qty = int(cash_per / entry_p)
                 shares = (raw_qty // 100) * 100
@@ -364,6 +384,20 @@ class BacktestEngine:
                     continue
 
                 entry_notional = shares * entry_p
+
+                # v4.4 — Risk: check position size
+                allowed, adj_notional = self.risk.check_position_size(
+                    entry_notional, current_exposure, nav,
+                )
+                if not allowed:
+                    continue
+                if adj_notional < entry_notional:
+                    shares = int((adj_notional / entry_p) // 100 * 100)
+                    if shares == 0:
+                        continue
+                    entry_notional = shares * entry_p
+
+                current_exposure += entry_notional
                 exit_notional = shares * exit_p
                 entry_cost = _cost(entry_notional, "buy", cfg)
                 exit_cost = _cost(exit_notional, "sell", cfg)
@@ -390,6 +424,10 @@ class BacktestEngine:
 
             nav += daily_pnl
             self.daily_nav.append((today, nav))
+
+            # v4.4 — Risk: update P&L tracking
+            day_pnl_pct = (daily_pnl / nav * 100) if nav > 0 else 0
+            self.risk.update_pnl(today, day_pnl_pct)
 
         # Final NAV point
         self.daily_nav.append((dates[-1], nav))
@@ -645,8 +683,18 @@ class BacktestEngine:
                 amin, amax = day_vals[valid].min(), day_vals[valid].max()
                 liq[i] = np.where(valid, (day_vals - amin) / (amax - amin + 1e-12), np.nan)
 
-        # 5. Market cap bias (placeholder – would need external data)
-        mkt_cap = np.ones_like(close_p) * 0.5  # neutral
+        # 5. Market cap proxy — use rolling average amount as proxy
+        #    v4.3: Large cap stocks have larger average daily turnover.
+        #    Amount-based proxy correlates ~0.75 with true market cap in A-shares.
+        avg_amount = pd.DataFrame(amount).rolling(window=lookback, min_periods=5).mean().values
+        log_avg_amt = np.log1p(avg_amount)
+        mkt_cap = np.zeros_like(log_avg_amt)
+        for i in range(n_dates):
+            day_vals = log_avg_amt[i]
+            valid = tradable[i]
+            if valid.any():
+                amin, amax = day_vals[valid].min(), day_vals[valid].max()
+                mkt_cap[i] = np.where(valid, (day_vals - amin) / (amax - amin + 1e-12), np.nan)
 
         # 6. Overnight return = open / pre_close - 1
         #    v4.3: NEGATIVE direction — avoid gap-up (尹力博 2021)

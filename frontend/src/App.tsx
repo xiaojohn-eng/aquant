@@ -1,62 +1,47 @@
-import React, { useState, useCallback } from 'react';
-import { Routes, Route } from 'react-router-dom';
-import Layout from './components/Layout';
-import RecommendationsPage from './pages/RecommendationsPage';
-import PortfolioPage from './pages/PortfolioPage';
-import PerformancePage from './pages/PerformancePage';
-import GpuPage from './pages/GpuPage';
-import BacktestView from './components/BacktestView';
-import { useWebSocket } from './hooks/useWebSocket';
-import { WebSocketMessage } from './types';
+import { useState } from 'react'
+import DashboardLayout from './components/DashboardLayout'
+import RecommendationList from './components/RecommendationList'
+import EquityChart from './components/EquityChart'
+import GPUMonitor from './components/GPUMonitor'
+import RiskStatus from './components/RiskStatus'
+import { useWebSocket } from './hooks/useWebSocket'
+import './index.css'
 
-export interface AppContextType {
-  wsConnected: boolean;
-  lastMessage: WebSocketMessage | null;
-  isDark: boolean;
-  setIsDark: (v: boolean) => void;
-}
-
-export const AppContext = React.createContext<AppContextType>({
-  wsConnected: false,
-  lastMessage: null,
-  isDark: true,
-  setIsDark: () => {},
-});
-
-const App: React.FC = () => {
-  const [isDark, setIsDark] = useState(true);
-  const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
-
-  const handleWsMessage = useCallback((msg: WebSocketMessage) => {
-    setLastMessage(msg);
-  }, []);
-
-  const { state: wsState } = useWebSocket({
-    endpoint: 'market',
-    onMessage: handleWsMessage,
-    autoConnect: true,
-  });
+function App() {
+  const [darkMode, setDarkMode] = useState(false)
+  const { marketData, gpuData, connected } = useWebSocket()
 
   return (
-    <AppContext.Provider
-      value={{
-        wsConnected: wsState.connected,
-        lastMessage,
-        isDark,
-        setIsDark,
-      }}
-    >
-      <Layout>
-        <Routes>
-          <Route path="/" element={<RecommendationsPage />} />
-          <Route path="/portfolio" element={<PortfolioPage />} />
-          <Route path="/performance" element={<PerformancePage />} />
-          <Route path="/gpu" element={<GpuPage />} />
-          <Route path="/backtest" element={<BacktestView />} />
-        </Routes>
-      </Layout>
-    </AppContext.Provider>
-  );
-};
+    <div className={`app ${darkMode ? 'dark' : ''}`}>
+      <DashboardLayout
+        darkMode={darkMode}
+        onToggleDark={() => setDarkMode(!darkMode)}
+        wsConnected={connected}
+      >
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Risk Status */}
+          <div className="lg:col-span-3">
+            <RiskStatus />
+          </div>
 
-export default App;
+          {/* Recommendations */}
+          <div className="lg:col-span-2">
+            <RecommendationList data={marketData} />
+          </div>
+
+          {/* GPU Monitor */}
+          <div>
+            <GPUMonitor data={gpuData} />
+          </div>
+
+          {/* Equity Chart */}
+          <div className="lg:col-span-3">
+            <EquityChart data={marketData} />
+          </div>
+        </div>
+      </DashboardLayout>
+    </div>
+  )
+}
+
+export default App
