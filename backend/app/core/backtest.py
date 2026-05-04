@@ -370,10 +370,12 @@ class BacktestEngine:
                     continue
 
                 # v4.4 — Liquidity-aware slippage (replaces fixed slippage_pct)
-                avg_amount = np.nanmean(amount[max(0, i-20):i, idx]) if i > 0 else amount[i, idx]
+                avg_amount = np.nanmean(amounts[max(0, i-20):i, idx]) if i > 0 else amounts[i, idx]
+                # ATR ratio from composite factor computation (simplified)
+                atr_val = np.std(amounts[max(0, i-14):i+1, idx]) / (entry_p + 1e-12) if i > 0 else 0.01
                 entry_slip = self.slippage.estimate_slippage(
-                    codes[idx], entry_p * 100, 100, avg_amount, atr_ratio[i, idx] if i < len(atr_ratio) else 0.01, None,
-                ) if hasattr(self, 'slippage') else cfg.slippage_pct
+                    codes[idx], entry_p * 100, 100, avg_amount, atr_val, None,
+                ) if hasattr(self, 'slippage') and self.slippage is not None else cfg.slippage_pct
                 exit_slip = entry_slip
                 entry_p *= (1 + entry_slip)
                 exit_p *= (1 - exit_slip)
