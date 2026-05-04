@@ -64,6 +64,7 @@ Thumbs.db
 htmlcov/
 .pytest_cache/
 
-# Model artifacts
-models/
+# Model artifacts (ML model files only, not Pydantic schemas)
+/backend/data/ml_ranker_model.pkl
+/backend/data/ml_models/
 checkpoints/
